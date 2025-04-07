@@ -1,6 +1,6 @@
 module github.com/sangwan491/backend-assignments/employee-management/backend
 
-go 1.24.1
+go 1.24.0
 
 require (
 	github.com/gorilla/handlers v1.5.2
