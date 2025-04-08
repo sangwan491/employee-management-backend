@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/gorilla/mux"
@@ -21,8 +22,14 @@ import (
 var collection *mongo.Collection
 var validate *validator.Validate
 
-// initialize MongoDB connection with context timeout
 func init() {
+	// Initialize validator
+	validate = validator.New()
+}
+
+// ConnectToMongoDB establishes a connection to MongoDB
+// Returns an error if connection fails
+func ConnectToMongoDB() error {
 	// Load .env file
 	err := godotenv.Load()
 	if err != nil {
@@ -34,26 +41,28 @@ func init() {
 	dbName := os.Getenv("MONGODB_DB_NAME")
 	colName := os.Getenv("MONGODB_COLLECTION_NAME")
 
-	if dbName == "" {
-		dbName = "employee"
-		log.Println("Warning: Using default database name")
-	}
-	if colName == "" {
-		colName = "employeeDB"
-		log.Println("Warning: Using default collection name")
+	if connectionString == "" || dbName == "" || colName == "" {
+		return fmt.Errorf("missing required MongoDB environment variables")
 	}
 
 	clientOptions := options.Client().ApplyURI(connectionString)
 	client, err := mongo.Connect(clientOptions)
 	if err != nil {
-		log.Printf("MongoDB connection error: %v", err)
-		return
+		return fmt.Errorf("MongoDB connection error: %w", err)
+	}
+
+	// Check the connection
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("MongoDB ping error: %w", err)
 	}
 
 	collection = client.Database(dbName).Collection(colName)
 	fmt.Println("MongoDB Connection success!")
-
-	validate = validator.New()
+	return nil
 }
 
 // formatValidationErrors converts validator errors into a user-friendly string.
