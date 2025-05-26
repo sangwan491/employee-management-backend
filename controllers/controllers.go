@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -103,13 +104,65 @@ func formatValidationErrors(errs validator.ValidationErrors) string {
 
 // GetAllEmployees - HTTP handler to get all employees
 func GetAllEmployees(w http.ResponseWriter, r *http.Request) {
-	employees, err := getAllEmployees()
+	params := mux.Vars(r)
+	page := params["page"]
+
+	// Validate page parameter
+	if page == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Page parameter is required"})
+		return
+	}
+
+	// Convert page to integer
+	pageInt, err := strconv.Atoi(page)
+	if err != nil || pageInt < 1 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid page parameter"})
+		return
+	}
+
+	// Set the limit and offset for pagination
+	limit := 20
+	offset := (pageInt - 1) * limit
+
+	// Retrieve employees from the database
+	employees, err := getEmployees(limit, offset)
+
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Failed to retrieve employees: %v", err)})
 		return
 	}
+
+	// Return the employees as JSON
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(employees)
+}
+
+// getEmployees retrieves employees from the database with pagination
+func getEmployees(limit, offset int) ([]models.Employee, error) {
+	cur, err := collection.Find(context.Background(), bson.M{}, options.Find().SetLimit(int64(limit)).SetSkip(int64(offset)))
+	if err != nil {
+		return nil, fmt.Errorf("error finding employees: %w", err)
+	}
+	defer cur.Close(context.Background())
+
+	employees := []models.Employee{}
+	for cur.Next(context.Background()) {
+		var employee models.Employee
+		if err := cur.Decode(&employee); err != nil {
+			return nil, fmt.Errorf("error decoding employee: %w", err)
+		}
+		employees = append(employees, employee)
+	}
+
+	if err := cur.Err(); err != nil {
+		return nil, fmt.Errorf("cursor error: %w", err)
+	}
+
+	return employees, nil
 }
 
 // CreateEmployee - HTTP handler to create a new employee
@@ -134,19 +187,13 @@ func CreateEmployee(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	employeeID, err := insertOneEmployee(employee)
-	if err != nil {
+	if err := insertOneEmployee(employee); err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
 		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Failed to insert employee: %v", err)})
 		return
 	}
 
-	employee.ID = employeeID // Set the ID in the employee model
-
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Employee created successfully",
-		"data":    employee,
-	})
+	json.NewEncoder(w).Encode(map[string]string{"message": "Employee created successfully"})
 }
 
 // UpdateEmployee - HTTP handler to update an employee
@@ -197,14 +244,13 @@ func DeleteEmployee(w http.ResponseWriter, r *http.Request) {
 }
 
 // insertOneEmployee inserts an employee into the database and returns an error if any.
-func insertOneEmployee(employee models.Employee) (bson.ObjectID, error) {
+func insertOneEmployee(employee models.Employee) error {
 	result, err := collection.InsertOne(context.Background(), employee)
 	if err != nil {
-		return bson.NilObjectID, fmt.Errorf("error inserting employee: %w", err)
+		return fmt.Errorf("error inserting employee: %w", err)
 	}
 	fmt.Println("Inserted 1 employee with id:", result.InsertedID)
-
-	return result.InsertedID.(bson.ObjectID), nil // Return the inserted ID
+	return nil
 }
 
 // updateOneEmployee updates an employee document in the database and returns an error if any.
